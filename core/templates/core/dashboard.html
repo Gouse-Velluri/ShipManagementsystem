@@ -1,0 +1,174 @@
+{% extends 'core/base.html' %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<!-- KPI Cards -->
+<div class="kpi-grid" id="kpi-grid"></div>
+
+<!-- Charts Row -->
+<div class="section-grid" style="margin-bottom:20px;">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Jobs by Status</span>
+    </div>
+    <div class="card-body">
+      <div style="display:flex;align-items:center;gap:24px;">
+        <div class="donut-wrap" id="donut-wrap"></div>
+        <div id="donut-legend" style="font-size:0.8rem;display:flex;flex-direction:column;gap:8px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Jobs by Priority</span>
+    </div>
+    <div class="card-body">
+      <div class="chart-wrap" id="priority-chart"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Jobs + Ships -->
+<div class="section-grid">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Recent Jobs</span>
+      <a href="/jobs/" class="btn btn-sm btn-secondary">View all</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Ship</th><th>Type</th><th>Priority</th><th>Status</th></tr></thead>
+        <tbody id="recent-jobs-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Fleet Overview</span>
+      <a href="/ships/" class="btn btn-sm btn-secondary">View all</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Name</th><th>Flag</th><th>Status</th></tr></thead>
+        <tbody id="fleet-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function(){
+  const ships = DB.ships.all();
+  const comps  = DB.components.all();
+  const jobs   = DB.jobs.all();
+
+  const overdue   = comps.filter(c => DB.components.isOverdue(c)).length;
+  const inProg    = jobs.filter(j => j.status === 'In Progress').length;
+  const completed = jobs.filter(j => j.status === 'Completed').length;
+  const open      = jobs.filter(j => j.status === 'Open').length;
+
+  // KPI Cards
+  document.getElementById('kpi-grid').innerHTML = `
+    <div class="kpi-card blue">
+      <div class="kpi-icon">🚢</div>
+      <div class="kpi-value">${ships.length}</div>
+      <div class="kpi-label">Total Ships</div>
+      <div class="kpi-sub">${ships.filter(s=>s.status==='Active').length} active</div>
+    </div>
+    <div class="kpi-card amber">
+      <div class="kpi-icon">⚠️</div>
+      <div class="kpi-value">${overdue}</div>
+      <div class="kpi-label">Overdue Components</div>
+      <div class="kpi-sub">Need maintenance</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="kpi-icon">✅</div>
+      <div class="kpi-value">${completed}</div>
+      <div class="kpi-label">Jobs Completed</div>
+      <div class="kpi-sub">This period</div>
+    </div>
+    <div class="kpi-card red">
+      <div class="kpi-icon">🔧</div>
+      <div class="kpi-value">${inProg}</div>
+      <div class="kpi-label">In Progress</div>
+      <div class="kpi-sub">${open} open jobs</div>
+    </div>
+  `;
+
+  // Donut chart
+  const total = jobs.length || 1;
+  const segments = [
+    { label: 'Open',        val: open,      color: '#4d9fff' },
+    { label: 'In Progress', val: inProg,    color: '#ffb800' },
+    { label: 'Completed',   val: completed, color: '#00e5a0' },
+  ];
+  let offset = 0;
+  const r = 54, cx = 70, cy = 70, circ = 2 * Math.PI * r;
+  const paths = segments.map(s => {
+    const dash = (s.val / total) * circ;
+    const p = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.color}"
+      stroke-width="14" stroke-dasharray="${dash} ${circ - dash}"
+      stroke-dashoffset="${-offset}" stroke-linecap="butt"/>`;
+    offset += dash;
+    return p;
+  }).join('');
+
+  document.getElementById('donut-wrap').innerHTML = `
+    <svg width="140" height="140" viewBox="0 0 140 140" style="transform:rotate(-90deg)">
+      <circle cx="70" cy="70" r="54" fill="none" stroke="var(--bg-2)" stroke-width="14"/>
+      ${paths}
+    </svg>
+    <div class="donut-center">
+      <div class="donut-val" style="color:var(--accent)">${jobs.length}</div>
+      <div class="donut-sub">Total Jobs</div>
+    </div>`;
+
+  document.getElementById('donut-legend').innerHTML = segments.map(s => `
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="width:10px;height:10px;border-radius:2px;background:${s.color};flex-shrink:0;"></span>
+      <span style="color:var(--text-secondary)">${s.label}</span>
+      <span style="margin-left:auto;font-weight:700;color:var(--text-primary)">${s.val}</span>
+    </div>`).join('');
+
+  // Priority bar chart
+  const priorities = ['Critical','High','Medium','Low'];
+  const colors = { Critical:'var(--red)', High:'#ff6b81', Medium:'var(--amber)', Low:'var(--green)' };
+  const maxVal = Math.max(...priorities.map(p => jobs.filter(j=>j.priority===p).length), 1);
+  document.getElementById('priority-chart').innerHTML = priorities.map(p => {
+    const cnt = jobs.filter(j => j.priority === p).length;
+    const h = Math.round((cnt / maxVal) * 140);
+    return `<div class="bar-group">
+      <div class="bar-val">${cnt}</div>
+      <div class="bar-track"><div class="bar-fill" style="height:${h}px;background:${colors[p]};border-radius:4px 4px 0 0;"></div></div>
+      <div class="bar-label">${p}</div>
+    </div>`;
+  }).join('');
+
+  // Recent jobs
+  const recentJobs = [...jobs].slice(0, 6);
+  document.getElementById('recent-jobs-body').innerHTML = recentJobs.map(j => {
+    const ship = DB.ships.get(j.shipId);
+    return `<tr>
+      <td><a href="/ships/${j.shipId}/" style="color:var(--accent);text-decoration:none;">${ship?.name || '—'}</a></td>
+      <td>${j.type}</td>
+      <td>${UI.priorityBadge(j.priority)}</td>
+      <td>${UI.statusBadge(j.status)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="4" class="text-muted text-sm" style="text-align:center;padding:20px">No jobs yet</td></tr>';
+
+  // Fleet
+  document.getElementById('fleet-body').innerHTML = ships.slice(0,6).map(s => `
+    <tr>
+      <td><a href="/ships/${s.id}/" style="color:var(--accent);text-decoration:none;">${escHtml(s.name)}</a></td>
+      <td>${escHtml(s.flag)}</td>
+      <td>${UI.statusBadge(s.status)}</td>
+    </tr>`).join('');
+
+})();
+</script>
+{% endblock %}

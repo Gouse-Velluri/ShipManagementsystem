@@ -1,0 +1,316 @@
+{% extends 'core/base.html' %}
+{% block title %}Jobs{% endblock %}
+{% block page_title %}Maintenance Jobs{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-header-left">
+    <h1>Maintenance Jobs</h1>
+    <p>Track and manage all maintenance activities</p>
+  </div>
+  <div class="page-header-right" id="job-actions"></div>
+</div>
+
+<div class="toolbar">
+  <div class="search-box">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="search-jobs" placeholder="Search jobs…">
+  </div>
+  <select class="form-control" id="filter-ship" style="width:auto;min-width:150px;"><option value="">All Ships</option></select>
+  <select class="form-control" id="filter-status" style="width:auto;min-width:150px;">
+    <option value="">All Status</option>
+    <option>Open</option>
+    <option>In Progress</option>
+    <option>Completed</option>
+  </select>
+  <select class="form-control" id="filter-priority" style="width:auto;min-width:140px;">
+    <option value="">All Priority</option>
+    <option>Critical</option>
+    <option>High</option>
+    <option>Medium</option>
+    <option>Low</option>
+  </select>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Ship</th>
+          <th>Component</th>
+          <th>Type</th>
+          <th>Priority</th>
+          <th>Status</th>
+          <th>Assigned</th>
+          <th>Scheduled</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="jobs-body"></tbody>
+    </table>
+  </div>
+  <div id="jobs-empty" class="empty-state" style="display:none">
+    <div class="empty-icon">🔧</div>
+    <div class="empty-title">No jobs found</div>
+    <div class="empty-desc">Create a maintenance job to get started</div>
+  </div>
+</div>
+
+<!-- Job Modal -->
+<div class="modal-overlay" id="job-modal">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-header">
+      <span class="modal-title" id="job-modal-title">Create Job</span>
+      <button class="modal-close" onclick="UI.closeModal('job-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="job-id">
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label required">Ship</label>
+          <select id="job-ship" class="form-control" onchange="loadComponents()">
+            <option value="">Select ship…</option>
+          </select>
+          <div class="form-error"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label required">Component</label>
+          <select id="job-component" class="form-control"><option value="">Select component…</option></select>
+          <div class="form-error"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label required">Job Type</label>
+          <select id="job-type" class="form-control">
+            <option>Inspection</option>
+            <option>Repair</option>
+            <option>Maintenance</option>
+            <option>Replacement</option>
+            <option>Emergency</option>
+          </select>
+          <div class="form-error"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label required">Priority</label>
+          <select id="job-priority" class="form-control">
+            <option>Critical</option>
+            <option>High</option>
+            <option>Medium</option>
+            <option>Low</option>
+          </select>
+          <div class="form-error"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label required">Status</label>
+          <select id="job-status" class="form-control">
+            <option>Open</option>
+            <option>In Progress</option>
+            <option>Completed</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label required">Scheduled Date</label>
+          <input type="date" id="job-date" class="form-control">
+          <div class="form-error"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label required">Assign Engineer</label>
+          <select id="job-engineer" class="form-control"></select>
+          <div class="form-error"></div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Notes</label>
+        <textarea id="job-notes" class="form-control" rows="2" placeholder="Optional notes…"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="UI.closeModal('job-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveJob()">Save Job</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const user = Auth.require();
+const ships = DB.ships.all();
+const allUsers = Storage.get('users') || [];
+const engineers = allUsers.filter(u => u.role === 'Engineer');
+
+// Populate ship dropdowns
+const filterShip = document.getElementById('filter-ship');
+const jobShipSel = document.getElementById('job-ship');
+const jobEngSel  = document.getElementById('job-engineer');
+
+ships.forEach(s => {
+  filterShip.insertAdjacentHTML('beforeend', `<option value="${s.id}">${escHtml(s.name)}</option>`);
+  jobShipSel.insertAdjacentHTML('beforeend', `<option value="${s.id}">${escHtml(s.name)}</option>`);
+});
+engineers.forEach(e => {
+  jobEngSel.insertAdjacentHTML('beforeend', `<option value="${e.id}">${escHtml(e.email.split('@')[0])}</option>`);
+});
+
+// Show create button for Admin/Inspector
+if (user.role === 'Admin' || user.role === 'Inspector') {
+  document.getElementById('job-actions').innerHTML =
+    `<button class="btn btn-primary" onclick="openJobModal()">+ Create Job</button>`;
+}
+
+function loadComponents(selectedId = '') {
+  const shipId = document.getElementById('job-ship').value;
+  const sel = document.getElementById('job-component');
+  sel.innerHTML = '<option value="">Select component…</option>';
+  if (!shipId) return;
+  DB.components.byShip(shipId).forEach(c => {
+    sel.insertAdjacentHTML('beforeend', `<option value="${c.id}" ${c.id===selectedId?'selected':''}>${escHtml(c.name)}</option>`);
+  });
+}
+
+function renderJobs() {
+  const search   = document.getElementById('search-jobs').value.toLowerCase();
+  const shipId   = document.getElementById('filter-ship').value;
+  const status   = document.getElementById('filter-status').value;
+  const priority = document.getElementById('filter-priority').value;
+
+  let jobs = DB.jobs.all().filter(j => {
+    const ship = DB.ships.get(j.shipId);
+    const comp = DB.components.get(j.componentId);
+    const matchSearch = !search ||
+      j.type.toLowerCase().includes(search) ||
+      ship?.name.toLowerCase().includes(search) ||
+      comp?.name.toLowerCase().includes(search);
+    return matchSearch &&
+      (!shipId   || j.shipId   === shipId) &&
+      (!status   || j.status   === status) &&
+      (!priority || j.priority === priority);
+  });
+
+  const tbody = document.getElementById('jobs-body');
+  const empty = document.getElementById('jobs-empty');
+  if (jobs.length === 0) { tbody.innerHTML=''; empty.style.display='block'; return; }
+  empty.style.display = 'none';
+  const canEdit = user.role === 'Admin' || user.role === 'Inspector';
+  const canUpdateStatus = canEdit || user.role === 'Engineer';
+
+  tbody.innerHTML = jobs.map(j => {
+    const ship  = DB.ships.get(j.shipId);
+    const comp  = DB.components.get(j.componentId);
+    const eng   = allUsers.find(u => u.id === j.assignedEngineerId);
+    return `<tr>
+      <td><a href="/ships/${j.shipId}/" style="color:var(--accent);text-decoration:none">${ship?.name||'—'}</a></td>
+      <td>${comp?.name||'—'}</td>
+      <td>${escHtml(j.type)}</td>
+      <td>${UI.priorityBadge(j.priority)}</td>
+      <td>${UI.statusBadge(j.status)}</td>
+      <td style="color:var(--text-muted)">${eng ? eng.email.split('@')[0] : '—'}</td>
+      <td>${UI.fmtDate(j.scheduledDate)}</td>
+      <td>
+        <div class="d-flex gap-2" style="flex-wrap:wrap">
+          ${canEdit ? `<button class="btn btn-sm btn-secondary" onclick="editJob('${j.id}')">Edit</button>` : ''}
+          ${canUpdateStatus && j.status !== 'Completed' ? `
+            <button class="btn btn-sm btn-secondary" onclick="advanceStatus('${j.id}')">
+              ${j.status === 'Open' ? '▶ Start' : '✓ Complete'}
+            </button>` : ''}
+          ${canEdit ? `<button class="btn btn-sm btn-danger" onclick="deleteJob('${j.id}')">Delete</button>` : ''}
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+['search-jobs','filter-ship','filter-status','filter-priority'].forEach(id => {
+  document.getElementById(id)[id === 'search-jobs' ? 'oninput' : 'onchange'] = renderJobs;
+});
+renderJobs();
+
+function openJobModal(job = null) {
+  UI.clearErrors('job-modal');
+  document.getElementById('job-id').value = job?.id || '';
+  document.getElementById('job-ship').value = job?.shipId || '';
+  document.getElementById('job-type').value = job?.type || 'Inspection';
+  document.getElementById('job-priority').value = job?.priority || 'Medium';
+  document.getElementById('job-status').value = job?.status || 'Open';
+  document.getElementById('job-date').value = job?.scheduledDate || '';
+  document.getElementById('job-engineer').value = job?.assignedEngineerId || (engineers[0]?.id || '');
+  document.getElementById('job-notes').value = job?.notes || '';
+  document.getElementById('job-modal-title').textContent = job ? 'Edit Job' : 'Create Job';
+  loadComponents(job?.componentId || '');
+  UI.openModal('job-modal');
+}
+
+function editJob(id) { openJobModal(DB.jobs.get(id)); }
+
+function saveJob() {
+  const valid = UI.validate([
+    { el: '#job-ship',      msg: 'Ship required' },
+    { el: '#job-component', msg: 'Component required' },
+    { el: '#job-date',      msg: 'Scheduled date required' },
+  ]);
+  if (!valid) return;
+
+  const isNew = !document.getElementById('job-id').value;
+  const prevJob = isNew ? null : DB.jobs.get(document.getElementById('job-id').value);
+  const job = {
+    id: document.getElementById('job-id').value || DB.jobs.newId(),
+    shipId:             document.getElementById('job-ship').value,
+    componentId:        document.getElementById('job-component').value,
+    type:               document.getElementById('job-type').value,
+    priority:           document.getElementById('job-priority').value,
+    status:             document.getElementById('job-status').value,
+    scheduledDate:      document.getElementById('job-date').value,
+    assignedEngineerId: document.getElementById('job-engineer').value,
+    notes:              document.getElementById('job-notes').value.trim(),
+  };
+
+  DB.jobs.save(job);
+  const ship = DB.ships.get(job.shipId);
+  if (isNew) {
+    DB.notifications.add(`Job created: ${job.type} on ${ship?.name}`, 'info');
+  } else if (prevJob?.status !== job.status) {
+    DB.notifications.add(`Job status updated to "${job.status}" — ${ship?.name}`,
+      job.status === 'Completed' ? 'success' : 'warning');
+  }
+
+  // If completed, update component's lastMaintenanceDate
+  if (job.status === 'Completed') {
+    const comp = DB.components.get(job.componentId);
+    if (comp) {
+      comp.lastMaintenanceDate = job.scheduledDate;
+      DB.components.save(comp);
+    }
+  }
+
+  App.updateNotifBadge();
+  renderJobs();
+  UI.closeModal('job-modal');
+  UI.toast(isNew ? 'Job created' : 'Job updated', 'success');
+}
+
+function advanceStatus(id) {
+  const job = DB.jobs.get(id);
+  job.status = job.status === 'Open' ? 'In Progress' : 'Completed';
+  DB.jobs.save(job);
+  const ship = DB.ships.get(job.shipId);
+  if (job.status === 'Completed') {
+    const comp = DB.components.get(job.componentId);
+    if (comp) { comp.lastMaintenanceDate = new Date().toISOString().split('T')[0]; DB.components.save(comp); }
+    DB.notifications.add(`Job completed: ${job.type} on ${ship?.name}`, 'success');
+  } else {
+    DB.notifications.add(`Job started: ${job.type} on ${ship?.name}`, 'info');
+  }
+  App.updateNotifBadge();
+  renderJobs();
+  UI.toast(`Status → ${job.status}`, 'success');
+}
+
+function deleteJob(id) {
+  const job = DB.jobs.get(id);
+  if (!UI.confirm(`Delete this ${job.type} job?`)) return;
+  DB.jobs.delete(id);
+  renderJobs();
+  UI.toast('Job deleted', 'info');
+}
+</script>
+{% endblock %}

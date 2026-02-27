@@ -1,0 +1,206 @@
+{% extends 'core/base.html' %}
+{% block title %}Components{% endblock %}
+{% block page_title %}Components{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-header-left">
+    <h1>Ship Components</h1>
+    <p>All components across your fleet</p>
+  </div>
+  <div class="page-header-right" id="comp-actions"></div>
+</div>
+
+<div class="toolbar">
+  <div class="search-box">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="search-comps" placeholder="Search components…">
+  </div>
+  <select class="form-control" id="filter-ship" style="width:auto;min-width:160px;">
+    <option value="">All Ships</option>
+  </select>
+  <select class="form-control" id="filter-cond" style="width:auto;min-width:140px;">
+    <option value="">All Conditions</option>
+    <option value="overdue">Overdue</option>
+    <option value="ok">OK</option>
+  </select>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Component Name</th>
+          <th>Ship</th>
+          <th>Serial Number</th>
+          <th>Install Date</th>
+          <th>Last Maintenance</th>
+          <th>Condition</th>
+          <th id="actions-col" style="display:none">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="comps-body"></tbody>
+    </table>
+  </div>
+  <div id="comps-empty" class="empty-state" style="display:none">
+    <div class="empty-icon">⚙</div>
+    <div class="empty-title">No components found</div>
+    <div class="empty-desc">Components are linked to ships</div>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="comp-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="comp-modal-title">Add Component</span>
+      <button class="modal-close" onclick="UI.closeModal('comp-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="comp-id">
+      <div class="form-group">
+        <label class="form-label required">Ship</label>
+        <select id="comp-ship" class="form-control"><option value="">Select ship…</option></select>
+        <div class="form-error"></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label required">Component Name</label>
+        <input type="text" id="comp-name" class="form-control" placeholder="e.g. Main Engine">
+        <div class="form-error"></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label required">Serial Number</label>
+          <input type="text" id="comp-serial" class="form-control" placeholder="ME-1234">
+          <div class="form-error"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label required">Install Date</label>
+          <input type="date" id="comp-install" class="form-control">
+          <div class="form-error"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Last Maintenance</label>
+          <input type="date" id="comp-maintenance" class="form-control">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="UI.closeModal('comp-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveComp()">Save</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const user = Auth.require();
+const ships = DB.ships.all();
+
+// Populate ship filters
+const filterShip = document.getElementById('filter-ship');
+const compShipSel = document.getElementById('comp-ship');
+ships.forEach(s => {
+  filterShip.insertAdjacentHTML('beforeend', `<option value="${s.id}">${escHtml(s.name)}</option>`);
+  compShipSel.insertAdjacentHTML('beforeend', `<option value="${s.id}">${escHtml(s.name)}</option>`);
+});
+
+if (user.role === 'Admin') {
+  document.getElementById('comp-actions').innerHTML =
+    `<button class="btn btn-primary" onclick="openCompModal()">+ Add Component</button>`;
+  document.getElementById('actions-col').style.display = '';
+}
+
+function renderComps() {
+  const search = document.getElementById('search-comps').value.toLowerCase();
+  const shipId = document.getElementById('filter-ship').value;
+  const cond   = document.getElementById('filter-cond').value;
+
+  let comps = DB.components.all().filter(c => {
+    const matchSearch = !search || c.name.toLowerCase().includes(search) || c.serialNumber.toLowerCase().includes(search);
+    const matchShip   = !shipId || c.shipId === shipId;
+    const overdue     = DB.components.isOverdue(c);
+    const matchCond   = !cond || (cond==='overdue' ? overdue : !overdue);
+    return matchSearch && matchShip && matchCond;
+  });
+
+  const tbody = document.getElementById('comps-body');
+  const empty = document.getElementById('comps-empty');
+  if (comps.length === 0) { tbody.innerHTML=''; empty.style.display='block'; return; }
+  empty.style.display = 'none';
+  const canAdmin = user.role === 'Admin';
+
+  tbody.innerHTML = comps.map(c => {
+    const ship = DB.ships.get(c.shipId);
+    const overdue = DB.components.isOverdue(c);
+    return `<tr>
+      <td>${escHtml(c.name)}</td>
+      <td><a href="/ships/${c.shipId}/" style="color:var(--accent);text-decoration:none;">${ship?.name||'—'}</a></td>
+      <td style="font-family:monospace;color:var(--text-muted)">${escHtml(c.serialNumber)}</td>
+      <td>${UI.fmtDate(c.installDate)}</td>
+      <td>${UI.fmtDate(c.lastMaintenanceDate)}</td>
+      <td>${overdue
+        ? '<span class="badge badge-red">⚠ Overdue</span>'
+        : '<span class="badge badge-green">✓ OK</span>'}</td>
+      ${canAdmin ? `<td><div class="d-flex gap-2">
+        <button class="btn btn-sm btn-secondary" onclick="editComp('${c.id}')">Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteComp('${c.id}')">Delete</button>
+      </div></td>` : ''}
+    </tr>`;
+  }).join('');
+}
+
+document.getElementById('search-comps').oninput = renderComps;
+document.getElementById('filter-ship').onchange = renderComps;
+document.getElementById('filter-cond').onchange = renderComps;
+renderComps();
+
+function openCompModal(comp = null) {
+  UI.clearErrors('comp-modal');
+  document.getElementById('comp-id').value = comp?.id || '';
+  document.getElementById('comp-ship').value = comp?.shipId || '';
+  document.getElementById('comp-name').value = comp?.name || '';
+  document.getElementById('comp-serial').value = comp?.serialNumber || '';
+  document.getElementById('comp-install').value = comp?.installDate || '';
+  document.getElementById('comp-maintenance').value = comp?.lastMaintenanceDate || '';
+  document.getElementById('comp-modal-title').textContent = comp ? 'Edit Component' : 'Add Component';
+  UI.openModal('comp-modal');
+}
+function editComp(id) { openCompModal(DB.components.get(id)); }
+
+function saveComp() {
+  const valid = UI.validate([
+    { el: '#comp-ship',   msg: 'Ship required' },
+    { el: '#comp-name',   msg: 'Name required' },
+    { el: '#comp-serial', msg: 'Serial required' },
+    { el: '#comp-install',msg: 'Install date required' },
+  ]);
+  if (!valid) return;
+  const comp = {
+    id: document.getElementById('comp-id').value || DB.components.newId(),
+    shipId: document.getElementById('comp-ship').value,
+    name: document.getElementById('comp-name').value.trim(),
+    serialNumber: document.getElementById('comp-serial').value.trim(),
+    installDate: document.getElementById('comp-install').value,
+    lastMaintenanceDate: document.getElementById('comp-maintenance').value || null,
+  };
+  const isNew = !document.getElementById('comp-id').value;
+  DB.components.save(comp);
+  renderComps();
+  UI.closeModal('comp-modal');
+  UI.toast(isNew ? 'Component added' : 'Component updated', 'success');
+  if (isNew) DB.notifications.add(`Component added: ${comp.name}`, 'info');
+  App.updateNotifBadge();
+}
+
+function deleteComp(id) {
+  const c = DB.components.get(id);
+  if (!UI.confirm(`Delete "${c.name}"?`)) return;
+  DB.components.delete(id);
+  renderComps();
+  UI.toast('Component deleted', 'info');
+}
+</script>
+{% endblock %}

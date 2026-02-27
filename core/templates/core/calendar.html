@@ -1,0 +1,201 @@
+{% extends 'core/base.html' %}
+{% block title %}Calendar{% endblock %}
+{% block page_title %}Maintenance Calendar{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-header-left">
+    <h1>Calendar</h1>
+    <p>Visualize scheduled maintenance jobs</p>
+  </div>
+  <div class="page-header-right">
+    <div class="d-flex gap-2">
+      <button class="btn btn-secondary" id="btn-monthly" onclick="setView('monthly')">Monthly</button>
+      <button class="btn btn-secondary" id="btn-weekly" onclick="setView('weekly')">Weekly</button>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:20px">
+  <div class="card-body">
+    <div class="cal-header">
+      <button class="btn btn-secondary btn-sm" onclick="prevPeriod()">← Prev</button>
+      <span class="cal-month" id="cal-title"></span>
+      <button class="btn btn-secondary btn-sm" onclick="nextPeriod()">Next →</button>
+    </div>
+    <div id="cal-grid-wrap"></div>
+  </div>
+</div>
+
+<!-- Day jobs panel -->
+<div class="card" id="day-panel" style="display:none">
+  <div class="card-header">
+    <span class="card-title" id="day-panel-title">Jobs for …</span>
+    <button class="btn btn-sm btn-secondary" onclick="document.getElementById('day-panel').style.display='none'">✕</button>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Ship</th><th>Component</th><th>Type</th><th>Priority</th><th>Status</th></tr></thead>
+      <tbody id="day-jobs-body"></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+Auth.require();
+let currentView = 'monthly';
+let viewDate = new Date();
+viewDate.setDate(1);
+
+const priorityColor = { Critical: 'var(--red)', High: '#ff6b81', Medium: 'var(--amber)', Low: 'var(--green)' };
+const statusColor   = { Open: 'var(--blue)', 'In Progress': 'var(--amber)', Completed: 'var(--green)' };
+const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+function setView(v) {
+  currentView = v;
+  document.getElementById('btn-monthly').className = 'btn btn-sm ' + (v==='monthly'?'btn-primary':'btn-secondary');
+  document.getElementById('btn-weekly').className  = 'btn btn-sm ' + (v==='weekly' ?'btn-primary':'btn-secondary');
+  render();
+}
+
+function prevPeriod() {
+  if (currentView === 'monthly') viewDate.setMonth(viewDate.getMonth() - 1);
+  else viewDate.setDate(viewDate.getDate() - 7);
+  render();
+}
+function nextPeriod() {
+  if (currentView === 'monthly') viewDate.setMonth(viewDate.getMonth() + 1);
+  else viewDate.setDate(viewDate.getDate() + 7);
+  render();
+}
+
+function fmtYMD(d) {
+  return d.getFullYear() + '-' +
+    String(d.getMonth()+1).padStart(2,'0') + '-' +
+    String(d.getDate()).padStart(2,'0');
+}
+
+function render() {
+  if (currentView === 'monthly') renderMonthly();
+  else renderWeekly();
+}
+
+function renderMonthly() {
+  const y = viewDate.getFullYear(), m = viewDate.getMonth();
+  document.getElementById('cal-title').textContent = `${MONTHS[m]} ${y}`;
+
+  const firstDay = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m+1, 0).getDate();
+  const today = fmtYMD(new Date());
+
+  let html = `<div class="cal-grid">`;
+  DAYS.forEach(d => html += `<div class="cal-day-name">${d}</div>`);
+
+  // Blank cells before first day
+  for (let i = 0; i < firstDay; i++) {
+    html += `<div class="cal-cell other-month"></div>`;
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const jobs = DB.jobs.byDate(dateStr);
+    const isToday = dateStr === today;
+    html += `<div class="cal-cell ${isToday?'today':''} ${jobs.length?'has-jobs':''}" onclick="showDayJobs('${dateStr}')">
+      <div class="cal-date">${d}</div>
+      ${jobs.slice(0,2).map(j => {
+        const ship = DB.ships.get(j.shipId);
+        return `<div class="cal-job-chip" style="background:${statusColor[j.status]||'#444'}22;color:${statusColor[j.status]||'#888'};border:1px solid ${statusColor[j.status]||'#444'}44">${escHtml(ship?.name||j.type)}</div>`;
+      }).join('')}
+      ${jobs.length > 2 ? `<div style="font-size:0.6rem;color:var(--text-muted)">+${jobs.length-2} more</div>` : ''}
+    </div>`;
+  }
+
+  // Fill remaining cells
+  const totalCells = firstDay + daysInMonth;
+  const remainder = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
+  for (let i = 0; i < remainder; i++) html += `<div class="cal-cell other-month"></div>`;
+
+  html += '</div>';
+  document.getElementById('cal-grid-wrap').innerHTML = html;
+}
+
+function renderWeekly() {
+  // Find Monday of current week
+  const d = new Date(viewDate);
+  const day = d.getDay();
+  const monday = new Date(d);
+  monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+
+  const weekDays = Array.from({length:7}, (_, i) => {
+    const date = new Date(monday);
+    date.setDate(monday.getDate() + i);
+    return date;
+  });
+
+  const start = weekDays[0], end = weekDays[6];
+  document.getElementById('cal-title').textContent =
+    `${start.getDate()} ${MONTHS[start.getMonth()]} – ${end.getDate()} ${MONTHS[end.getMonth()]} ${end.getFullYear()}`;
+
+  const today = fmtYMD(new Date());
+  let html = `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px">`;
+  html += weekDays.map(d => {
+    const ds = fmtYMD(d);
+    const jobs = DB.jobs.byDate(ds);
+    const isToday = ds === today;
+    return `<div style="min-height:200px">
+      <div style="text-align:center;padding:8px 4px 6px;border-bottom:1px solid var(--border);margin-bottom:8px">
+        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em">${DAYS[d.getDay()]}</div>
+        <div style="font-size:1.2rem;font-weight:700;font-family:var(--font-display);color:${isToday?'var(--accent)':'var(--text-primary)'}">${d.getDate()}</div>
+      </div>
+      ${jobs.map(j => {
+        const ship = DB.ships.get(j.shipId);
+        return `<div onclick="showDayJobs('${ds}')" style="
+          padding:5px 7px;border-radius:5px;margin-bottom:4px;cursor:pointer;
+          background:${statusColor[j.status]||'#333'}18;
+          border-left:3px solid ${statusColor[j.status]||'#888'};
+          font-size:0.68rem;color:var(--text-primary);transition:.15s;
+        " onmouseover="this.style.opacity='.7'" onmouseout="this.style.opacity='1'">
+          <div style="font-weight:600;margin-bottom:1px">${escHtml(ship?.name||'—')}</div>
+          <div style="color:var(--text-muted)">${j.type}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+  html += '</div>';
+  document.getElementById('cal-grid-wrap').innerHTML = html;
+}
+
+function showDayJobs(dateStr) {
+  const jobs = DB.jobs.byDate(dateStr);
+  const panel = document.getElementById('day-panel');
+  const [y,m,d] = dateStr.split('-');
+  document.getElementById('day-panel-title').textContent =
+    `Jobs — ${parseInt(d)} ${MONTHS[parseInt(m)-1]} ${y}`;
+
+  if (jobs.length === 0) {
+    document.getElementById('day-jobs-body').innerHTML =
+      `<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">No jobs scheduled</td></tr>`;
+  } else {
+    document.getElementById('day-jobs-body').innerHTML = jobs.map(j => {
+      const ship = DB.ships.get(j.shipId);
+      const comp = DB.components.get(j.componentId);
+      return `<tr>
+        <td><a href="/ships/${j.shipId}/" style="color:var(--accent);text-decoration:none">${ship?.name||'—'}</a></td>
+        <td>${comp?.name||'—'}</td>
+        <td>${j.type}</td>
+        <td>${UI.priorityBadge(j.priority)}</td>
+        <td>${UI.statusBadge(j.status)}</td>
+      </tr>`;
+    }).join('');
+  }
+  panel.style.display = 'block';
+  panel.scrollIntoView({ behavior:'smooth', block:'nearest' });
+}
+
+// Init
+setView('monthly');
+</script>
+{% endblock %}

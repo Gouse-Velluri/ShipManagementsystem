@@ -1,0 +1,98 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login — MarineOps</title>
+  <link rel="stylesheet" href="{% static 'core/css/style.css' %}">
+</head>
+<body>
+<div class="login-page">
+  <div class="login-bg-grid"></div>
+  <div class="login-bg-glow"></div>
+
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="logo-icon" style="width:52px;height:52px;font-size:24px;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#00c8ff,#4d9fff);border-radius:12px;box-shadow:0 0 24px rgba(0,200,255,0.4)">⚓</div>
+      <h1>MarineOps</h1>
+      <p>Ship Maintenance Management System</p>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label required">Email Address</label>
+      <input type="email" id="login-email" class="form-control" placeholder="your@email.com" autocomplete="email">
+      <div class="form-error"></div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label required">Password</label>
+      <input type="password" id="login-password" class="form-control" placeholder="••••••••" autocomplete="current-password">
+      <div class="form-error"></div>
+    </div>
+
+    <div id="login-error" style="color:var(--red);font-size:0.82rem;margin-bottom:12px;display:none;text-align:center;"></div>
+
+    <button class="btn btn-primary w-full" id="login-btn" style="justify-content:center;padding:11px 16px;font-size:0.95rem;">
+      Sign In →
+    </button>
+
+    <div class="demo-creds">
+      <strong>Demo accounts (click to autofill):</strong>
+      <div class="demo-cred-row" onclick="fillCred('admin@entnt.in','admin123')">
+        <span>🔑 Admin</span><span style="color:var(--text-muted)">admin@entnt.in / admin123</span>
+      </div>
+      <div class="demo-cred-row" onclick="fillCred('inspector@entnt.in','inspect123')">
+        <span>🔍 Inspector</span><span style="color:var(--text-muted)">inspector@entnt.in / inspect123</span>
+      </div>
+      <div class="demo-cred-row" onclick="fillCred('engineer@entnt.in','engine123')">
+        <span>🔧 Engineer</span><span style="color:var(--text-muted)">engineer@entnt.in / engine123</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-container"></div>
+<script src="{% static 'core/js/app.js' %}"></script>
+<script>
+  Storage.init();
+
+  // Redirect if already logged in
+  if (Auth.currentUser()) window.location.href = '/dashboard/';
+
+  function fillCred(email, pass) {
+    document.getElementById('login-email').value = email;
+    document.getElementById('login-password').value = pass;
+  }
+
+  document.getElementById('login-btn').onclick = doLogin;
+  document.getElementById('login-password').onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
+
+  function doLogin() {
+    const email = document.getElementById('login-email').value.trim();
+    const pass  = document.getElementById('login-password').value;
+    const errEl = document.getElementById('login-error');
+    errEl.style.display = 'none';
+
+    if (!email) { document.querySelector('#login-email + .form-error').textContent = 'Email required'; return; }
+    if (!pass)  { document.querySelector('#login-password + .form-error').textContent = 'Password required'; return; }
+
+    const btn = document.getElementById('login-btn');
+    btn.textContent = 'Signing in…';
+    btn.disabled = true;
+
+    setTimeout(() => {
+      const user = Auth.login(email, pass);
+      if (user) {
+        window.location.href = '/dashboard/';
+      } else {
+        errEl.style.display = 'block';
+        errEl.textContent = 'Invalid email or password';
+        btn.textContent = 'Sign In →';
+        btn.disabled = false;
+      }
+    }, 400);
+  }
+</script>
+</body>
+</html>

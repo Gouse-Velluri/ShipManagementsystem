@@ -1,0 +1,294 @@
+{% extends 'core/base.html' %}
+{% block title %}Ship Detail{% endblock %}
+{% block page_title %}Ship Profile{% endblock %}
+
+{% block content %}
+<div id="detail-root"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const user = Auth.require();
+const SHIP_ID = '{{ ship_id }}';
+const ship = DB.ships.get(SHIP_ID);
+
+if (!ship) {
+  document.getElementById('detail-root').innerHTML = `
+    <div class="empty-state">
+      <div class="empty-icon">⚠️</div>
+      <div class="empty-title">Ship not found</div>
+      <div class="empty-desc"><a href="/ships/" style="color:var(--accent)">← Back to ships</a></div>
+    </div>`;
+} else {
+  renderAll();
+}
+
+function renderAll() {
+  const comps = DB.components.byShip(SHIP_ID);
+  const jobs  = DB.jobs.byShip(SHIP_ID);
+  const canAdmin = user.role === 'Admin';
+
+  document.getElementById('detail-root').innerHTML = `
+    <!-- Header -->
+    <div class="page-header" style="margin-bottom:24px">
+      <div class="page-header-left">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+          <a href="/ships/" style="color:var(--text-muted);text-decoration:none;font-size:0.85rem">Ships</a>
+          <span style="color:var(--text-muted)">›</span>
+          <span style="color:var(--text-secondary);font-size:0.85rem">${escHtml(ship.name)}</span>
+        </div>
+        <h1>${escHtml(ship.name)}</h1>
+        <p>IMO ${escHtml(ship.imo)} · ${escHtml(ship.flag)} · ${escHtml(ship.type||'—')}</p>
+      </div>
+      <div class="page-header-right">
+        ${UI.statusBadge(ship.status)}
+        ${canAdmin ? `<button class="btn btn-secondary" onclick="editShip()">Edit Ship</button>` : ''}
+      </div>
+    </div>
+
+    <!-- Info + Stats -->
+    <div class="section-grid" style="margin-bottom:20px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">General Info</span></div>
+        <div class="card-body">
+          <div class="detail-grid">
+            <div class="detail-row"><div class="detail-label">Name</div><div class="detail-val">${escHtml(ship.name)}</div></div>
+            <div class="detail-row"><div class="detail-label">IMO Number</div><div class="detail-val" style="font-family:monospace">${escHtml(ship.imo)}</div></div>
+            <div class="detail-row"><div class="detail-label">Flag</div><div class="detail-val">${escHtml(ship.flag)}</div></div>
+            <div class="detail-row"><div class="detail-label">Type</div><div class="detail-val">${escHtml(ship.type||'—')}</div></div>
+            <div class="detail-row"><div class="detail-label">Build Year</div><div class="detail-val">${escHtml(ship.year||'—')}</div></div>
+            <div class="detail-row"><div class="detail-label">Status</div><div class="detail-val">${UI.statusBadge(ship.status)}</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Fleet Stats</span></div>
+        <div class="card-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+            <div style="text-align:center;padding:16px;background:var(--bg-2);border-radius:10px;">
+              <div style="font-family:var(--font-display);font-size:2rem;font-weight:800;color:var(--accent)">${comps.length}</div>
+              <div style="font-size:0.78rem;color:var(--text-muted)">Components</div>
+            </div>
+            <div style="text-align:center;padding:16px;background:var(--bg-2);border-radius:10px;">
+              <div style="font-family:var(--font-display);font-size:2rem;font-weight:800;color:var(--amber)">${jobs.filter(j=>j.status!=='Completed').length}</div>
+              <div style="font-size:0.78rem;color:var(--text-muted)">Active Jobs</div>
+            </div>
+            <div style="text-align:center;padding:16px;background:var(--bg-2);border-radius:10px;">
+              <div style="font-family:var(--font-display);font-size:2rem;font-weight:800;color:var(--green)">${jobs.filter(j=>j.status==='Completed').length}</div>
+              <div style="font-size:0.78rem;color:var(--text-muted)">Completed</div>
+            </div>
+            <div style="text-align:center;padding:16px;background:var(--bg-2);border-radius:10px;">
+              <div style="font-family:var(--font-display);font-size:2rem;font-weight:800;color:var(--red)">${comps.filter(c=>DB.components.isOverdue(c)).length}</div>
+              <div style="font-size:0.78rem;color:var(--text-muted)">Overdue</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Components -->
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header">
+        <span class="card-title">Components (${comps.length})</span>
+        ${canAdmin ? `<button class="btn btn-sm btn-primary" onclick="openCompModal()">+ Add Component</button>` : ''}
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Serial Number</th><th>Install Date</th><th>Last Maintenance</th><th>Condition</th>${canAdmin?'<th>Actions</th>':''}</tr></thead>
+          <tbody id="comps-body">
+            ${comps.length === 0
+              ? `<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">⚙</div><div class="empty-title">No components</div></div></td></tr>`
+              : comps.map(c => {
+                  const overdue = DB.components.isOverdue(c);
+                  return `<tr>
+                    <td>${escHtml(c.name)}</td>
+                    <td style="font-family:monospace;color:var(--text-muted)">${escHtml(c.serialNumber)}</td>
+                    <td>${UI.fmtDate(c.installDate)}</td>
+                    <td>${UI.fmtDate(c.lastMaintenanceDate)}</td>
+                    <td>${overdue
+                      ? '<span class="badge badge-red">Overdue</span>'
+                      : '<span class="badge badge-green">OK</span>'}</td>
+                    ${canAdmin ? `<td><div class="d-flex gap-2">
+                      <button class="btn btn-sm btn-secondary" onclick="editComp('${c.id}')">Edit</button>
+                      <button class="btn btn-sm btn-danger" onclick="deleteComp('${c.id}')">Delete</button>
+                    </div></td>` : ''}
+                  </tr>`;
+                }).join('')
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Maintenance History -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Maintenance History</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Type</th><th>Component</th><th>Priority</th><th>Status</th><th>Scheduled</th></tr></thead>
+          <tbody>
+            ${jobs.length === 0
+              ? `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted)">No maintenance jobs</td></tr>`
+              : jobs.map(j => {
+                  const comp = DB.components.get(j.componentId);
+                  return `<tr>
+                    <td>${escHtml(j.type)}</td>
+                    <td>${comp ? escHtml(comp.name) : '—'}</td>
+                    <td>${UI.priorityBadge(j.priority)}</td>
+                    <td>${UI.statusBadge(j.status)}</td>
+                    <td>${UI.fmtDate(j.scheduledDate)}</td>
+                  </tr>`;
+                }).join('')
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+// ── Component Modal ───────────────────────────────────────────
+const compModalHtml = `
+<div class="modal-overlay" id="comp-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="comp-modal-title">Add Component</span>
+      <button class="modal-close" onclick="UI.closeModal('comp-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="comp-id">
+      <div class="form-group">
+        <label class="form-label required">Component Name</label>
+        <input type="text" id="comp-name" class="form-control" placeholder="e.g. Main Engine">
+        <div class="form-error"></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label required">Serial Number</label>
+          <input type="text" id="comp-serial" class="form-control" placeholder="ME-1234">
+          <div class="form-error"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label required">Install Date</label>
+          <input type="date" id="comp-install" class="form-control">
+          <div class="form-error"></div>
+        </div>
+        <div class="form-group mb-0">
+          <label class="form-label">Last Maintenance Date</label>
+          <input type="date" id="comp-maintenance" class="form-control">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="UI.closeModal('comp-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveComp()">Save Component</button>
+    </div>
+  </div>
+</div>`;
+
+document.body.insertAdjacentHTML('beforeend', compModalHtml);
+
+function openCompModal(comp = null) {
+  UI.clearErrors('comp-modal');
+  document.getElementById('comp-id').value = comp?.id || '';
+  document.getElementById('comp-name').value = comp?.name || '';
+  document.getElementById('comp-serial').value = comp?.serialNumber || '';
+  document.getElementById('comp-install').value = comp?.installDate || '';
+  document.getElementById('comp-maintenance').value = comp?.lastMaintenanceDate || '';
+  document.getElementById('comp-modal-title').textContent = comp ? 'Edit Component' : 'Add Component';
+  UI.openModal('comp-modal');
+}
+
+function editComp(id) { openCompModal(DB.components.get(id)); }
+
+function saveComp() {
+  const valid = UI.validate([
+    { el: '#comp-name',    msg: 'Name required' },
+    { el: '#comp-serial',  msg: 'Serial number required' },
+    { el: '#comp-install', msg: 'Install date required' },
+  ]);
+  if (!valid) return;
+  const comp = {
+    id: document.getElementById('comp-id').value || DB.components.newId(),
+    shipId: SHIP_ID,
+    name: document.getElementById('comp-name').value.trim(),
+    serialNumber: document.getElementById('comp-serial').value.trim(),
+    installDate: document.getElementById('comp-install').value,
+    lastMaintenanceDate: document.getElementById('comp-maintenance').value || null,
+  };
+  const isNew = !document.getElementById('comp-id').value;
+  DB.components.save(comp);
+  UI.closeModal('comp-modal');
+  UI.toast(isNew ? 'Component added' : 'Component updated', 'success');
+  if (isNew) DB.notifications.add(`New component added: ${comp.name}`, 'info');
+  App.updateNotifBadge();
+  renderAll();
+}
+
+function deleteComp(id) {
+  const c = DB.components.get(id);
+  if (!UI.confirm(`Delete component "${c.name}"?`)) return;
+  DB.components.delete(id);
+  UI.toast('Component deleted', 'info');
+  renderAll();
+}
+
+// ── Ship Edit ─────────────────────────────────────────────────
+function editShip() {
+  const html = `
+  <div class="modal-overlay" id="edit-ship-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Edit Ship</span>
+        <button class="modal-close" onclick="UI.closeModal('edit-ship-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label required">Name</label>
+            <input type="text" id="es-name" class="form-control" value="${escHtml(ship.name)}">
+            <div class="form-error"></div></div>
+          <div class="form-group"><label class="form-label required">IMO</label>
+            <input type="text" id="es-imo" class="form-control" value="${escHtml(ship.imo)}">
+            <div class="form-error"></div></div>
+          <div class="form-group"><label class="form-label required">Flag</label>
+            <input type="text" id="es-flag" class="form-control" value="${escHtml(ship.flag)}">
+            <div class="form-error"></div></div>
+          <div class="form-group"><label class="form-label">Type</label>
+            <select id="es-type" class="form-control">
+              ${['Container','Cargo','Tanker','Bulk Carrier','Passenger','Other'].map(t=>`<option ${ship.type===t?'selected':''}>${t}</option>`).join('')}
+            </select></div>
+          <div class="form-group"><label class="form-label">Status</label>
+            <select id="es-status" class="form-control">
+              ${['Active','Under Maintenance','Inactive'].map(s=>`<option ${ship.status===s?'selected':''}>${s}</option>`).join('')}
+            </select></div>
+          <div class="form-group"><label class="form-label">Build Year</label>
+            <input type="number" id="es-year" class="form-control" value="${ship.year||''}"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="UI.closeModal('edit-ship-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveEditShip()">Save</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+  UI.openModal('edit-ship-modal');
+}
+
+function saveEditShip() {
+  ship.name   = document.getElementById('es-name').value.trim();
+  ship.imo    = document.getElementById('es-imo').value.trim();
+  ship.flag   = document.getElementById('es-flag').value.trim();
+  ship.type   = document.getElementById('es-type').value;
+  ship.status = document.getElementById('es-status').value;
+  ship.year   = document.getElementById('es-year').value;
+  DB.ships.save(ship);
+  UI.closeModal('edit-ship-modal');
+  document.getElementById('edit-ship-modal').remove();
+  UI.toast('Ship updated', 'success');
+  renderAll();
+}
+</script>
+{% endblock %}

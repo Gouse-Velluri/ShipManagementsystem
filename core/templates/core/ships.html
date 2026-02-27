@@ -1,0 +1,227 @@
+{% extends 'core/base.html' %}
+{% block title %}Ships{% endblock %}
+{% block page_title %}Fleet Management{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-header-left">
+    <h1>Ships</h1>
+    <p>Manage your fleet of vessels</p>
+  </div>
+  <div class="page-header-right" id="ships-actions"></div>
+</div>
+
+<div class="toolbar">
+  <div class="search-box">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="search-ships" placeholder="Search ships…">
+  </div>
+  <select class="form-control" id="filter-status" style="width:auto;min-width:150px;">
+    <option value="">All Status</option>
+    <option>Active</option>
+    <option>Under Maintenance</option>
+    <option>Inactive</option>
+  </select>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Ship Name</th>
+          <th>IMO Number</th>
+          <th>Flag</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th>Components</th>
+          <th>Jobs</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="ships-body"></tbody>
+    </table>
+  </div>
+  <div id="ships-empty" class="empty-state" style="display:none;">
+    <div class="empty-icon">🚢</div>
+    <div class="empty-title">No ships found</div>
+    <div class="empty-desc">Add your first vessel to get started</div>
+  </div>
+</div>
+
+<!-- Ship Modal -->
+<div class="modal-overlay" id="ship-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="ship-modal-title">Add Ship</span>
+      <button class="modal-close" onclick="UI.closeModal('ship-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="ship-id">
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label required">Ship Name</label>
+          <input type="text" id="ship-name" class="form-control" placeholder="e.g. Ever Given">
+          <div class="form-error"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label required">IMO Number</label>
+          <input type="text" id="ship-imo" class="form-control" placeholder="7 digits">
+          <div class="form-error"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label required">Flag (Country)</label>
+          <input type="text" id="ship-flag" class="form-control" placeholder="e.g. Panama">
+          <div class="form-error"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Type</label>
+          <select id="ship-type" class="form-control">
+            <option>Container</option>
+            <option>Cargo</option>
+            <option>Tanker</option>
+            <option>Bulk Carrier</option>
+            <option>Passenger</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label required">Status</label>
+          <select id="ship-status" class="form-control">
+            <option>Active</option>
+            <option>Under Maintenance</option>
+            <option>Inactive</option>
+          </select>
+          <div class="form-error"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Build Year</label>
+          <input type="number" id="ship-year" class="form-control" placeholder="e.g. 2018" min="1900" max="2030">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="UI.closeModal('ship-modal')">Cancel</button>
+      <button class="btn btn-primary" id="ship-save-btn" onclick="saveShip()">Save Ship</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const user = Auth.require();
+
+// Show Add button for Admin
+if (user.role === 'Admin') {
+  document.getElementById('ships-actions').innerHTML =
+    `<button class="btn btn-primary" onclick="openShipModal()">+ Add Ship</button>`;
+}
+
+let allShips = DB.ships.all();
+
+function renderShips() {
+  const search = document.getElementById('search-ships').value.toLowerCase();
+  const status = document.getElementById('filter-status').value;
+  let ships = allShips.filter(s => {
+    const matchSearch = !search ||
+      s.name.toLowerCase().includes(search) ||
+      s.imo.toLowerCase().includes(search) ||
+      s.flag.toLowerCase().includes(search);
+    const matchStatus = !status || s.status === status;
+    return matchSearch && matchStatus;
+  });
+
+  const tbody = document.getElementById('ships-body');
+  const empty = document.getElementById('ships-empty');
+  if (ships.length === 0) {
+    tbody.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  tbody.innerHTML = ships.map(s => {
+    const comps = DB.components.byShip(s.id).length;
+    const shipJobs = DB.jobs.byShip(s.id).length;
+    const canEdit = user.role === 'Admin';
+    return `<tr>
+      <td><a href="/ships/${s.id}/" style="color:var(--accent);text-decoration:none;font-weight:600;">${escHtml(s.name)}</a></td>
+      <td style="font-family:monospace;color:var(--text-muted)">${escHtml(s.imo)}</td>
+      <td>${escHtml(s.flag)}</td>
+      <td>${escHtml(s.type||'—')}</td>
+      <td>${UI.statusBadge(s.status)}</td>
+      <td><span class="badge badge-gray">${comps}</span></td>
+      <td><span class="badge badge-gray">${shipJobs}</span></td>
+      <td>
+        <div class="d-flex gap-2">
+          <a href="/ships/${s.id}/" class="btn btn-sm btn-secondary">View</a>
+          ${canEdit ? `
+          <button class="btn btn-sm btn-secondary" onclick="editShip('${s.id}')">Edit</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteShip('${s.id}')">Delete</button>
+          ` : ''}
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+document.getElementById('search-ships').oninput = renderShips;
+document.getElementById('filter-status').onchange = renderShips;
+renderShips();
+
+function openShipModal(ship = null) {
+  UI.clearErrors('ship-modal');
+  document.getElementById('ship-id').value = ship?.id || '';
+  document.getElementById('ship-name').value = ship?.name || '';
+  document.getElementById('ship-imo').value = ship?.imo || '';
+  document.getElementById('ship-flag').value = ship?.flag || '';
+  document.getElementById('ship-type').value = ship?.type || 'Container';
+  document.getElementById('ship-status').value = ship?.status || 'Active';
+  document.getElementById('ship-year').value = ship?.year || '';
+  document.getElementById('ship-modal-title').textContent = ship ? 'Edit Ship' : 'Add Ship';
+  UI.openModal('ship-modal');
+}
+
+function editShip(id) {
+  openShipModal(DB.ships.get(id));
+}
+
+function saveShip() {
+  const valid = UI.validate([
+    { el: '#ship-name', msg: 'Ship name required' },
+    { el: '#ship-imo',  msg: 'IMO number required' },
+    { el: '#ship-flag', msg: 'Flag required' },
+  ]);
+  if (!valid) return;
+
+  const ship = {
+    id:     document.getElementById('ship-id').value || DB.ships.newId(),
+    name:   document.getElementById('ship-name').value.trim(),
+    imo:    document.getElementById('ship-imo').value.trim(),
+    flag:   document.getElementById('ship-flag').value.trim(),
+    type:   document.getElementById('ship-type').value,
+    status: document.getElementById('ship-status').value,
+    year:   document.getElementById('ship-year').value || '',
+  };
+  const isNew = !document.getElementById('ship-id').value;
+  DB.ships.save(ship);
+  allShips = DB.ships.all();
+  renderShips();
+  UI.closeModal('ship-modal');
+  UI.toast(isNew ? `Ship "${ship.name}" added` : `Ship updated`, 'success');
+  if (isNew) DB.notifications.add(`New ship added: ${ship.name}`, 'success');
+  App.updateNotifBadge();
+}
+
+function deleteShip(id) {
+  const ship = DB.ships.get(id);
+  if (!UI.confirm(`Delete "${ship.name}" and all its components and jobs?`)) return;
+  DB.ships.delete(id);
+  allShips = DB.ships.all();
+  renderShips();
+  UI.toast(`Ship deleted`, 'info');
+  DB.notifications.add(`Ship removed: ${ship.name}`, 'warning');
+  App.updateNotifBadge();
+}
+</script>
+{% endblock %}
